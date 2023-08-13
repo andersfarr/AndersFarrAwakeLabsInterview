@@ -10,15 +10,13 @@ val Teal200 = Color(0xFF03DAC5)
 val Red400 = Color(0xFFCF6679)
 
 internal val wearColorPalette: Colors = Colors(
-    primary = Purple500,
+    primary = Color.White,
     primaryVariant = Purple700,
-    secondary = Teal200,
+    secondary = Purple200,
     secondaryVariant = Purple200,
     error = Red400,
     onPrimary = Color.Black,
     onSecondary = Color.Black,
     onError = Color.Black,
-    background = Color.White
+    background = Color.Black
 )
-
-interface ButtonColors
