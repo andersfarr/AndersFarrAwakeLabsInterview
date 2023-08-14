@@ -25,14 +25,19 @@ import androidx.health.services.client.PassiveListenerCallback
 import androidx.health.services.client.data.DataPointContainer
 import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.PassiveListenerConfig
+import androidx.lifecycle.lifecycleScope
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.awakelabsandersfarrinterview.presentation.theme.AwakeLabsAndersFarrInterviewTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Queue
@@ -46,6 +51,7 @@ class SecondaryActivity : ComponentActivity() {
     var lastTimeDBWorking: String = LocalDateTime.now().format(dbTimeFormatter)
 
     //Data to be logged in database
+    @Entity
     data class HealthDataPoint(
         @PrimaryKey val id: UUID,
         @ColumnInfo(name = "time") val time: String?,
@@ -59,17 +65,41 @@ class SecondaryActivity : ComponentActivity() {
     interface HealthDao {
         @Insert
         fun insert(datapoint: HealthDataPoint)
+
     }
 
     @Database(entities = [HealthDataPoint::class], version = 1)
     abstract class AppDatabase : RoomDatabase() {
         abstract fun userDao(): HealthDao
 
+        private class HealthCallback(
+            private val scope: CoroutineScope
+        ) : RoomDatabase.Callback() {
+
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                super.onCreate(db)
+                INSTANCE?.let { database ->
+                    scope.launch {
+                        val healthDao = database.userDao()
+                        val startDataPoint = HealthDataPoint(
+                            UUID.randomUUID(),
+                            "0",
+                            0.0,
+                            0.0,
+                            0.0,
+                        )
+                        healthDao.insert(startDataPoint)
+                    }
+                }
+            }
+        }
+
         companion object {
             @Volatile
             private var INSTANCE: AppDatabase? = null
 
-            fun getDatabase(context: Context): AppDatabase {
+            fun getDatabase(context: Context,
+                            scope: CoroutineScope): AppDatabase {
                 // if the INSTANCE is not null, then return it,
                 // if it is, then create the database
                 return INSTANCE ?: synchronized(this) {
@@ -77,7 +107,8 @@ class SecondaryActivity : ComponentActivity() {
                         context.applicationContext,
                         AppDatabase::class.java,
                         "health_database"
-                    ).build()
+                    ).addCallback(HealthCallback(scope))
+                        .build()
                     INSTANCE = instance
                     // return instance
                     return instance
@@ -91,19 +122,30 @@ class SecondaryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         //building health polling information
-        val healthClient = HealthServices.getClient(this /*context*/)
+        val healthClient = HealthServices.getClient(this)
         val passiveMonitoringClient = healthClient.passiveMonitoringClient
 
         //Grabbing heart rate, elevation, and speed as stats for initial prototype
         val passiveListenerConfig = PassiveListenerConfig.builder()
             .setDataTypes(setOf(DataType.HEART_RATE_BPM, DataType.ABSOLUTE_ELEVATION, DataType.SPEED))
             .build()
+        val database by lazy{AppDatabase.getDatabase(this, this.lifecycleScope)}
+        val userDao by lazy{database.userDao()}
 
         // logging data in database whenever new data is received from HealthServicesClient
         val passiveListenerCallback: PassiveListenerCallback = object : PassiveListenerCallback {
+            override fun onRegistered() {
+                super.onRegistered()
+                val startDataPoint = HealthDataPoint(
+                    UUID.randomUUID(),
+                    "0",
+                    0.0,
+                    0.0,
+                    0.0,
+                )
+                userDao.insert(startDataPoint)
+            }
             override fun onNewDataPointsReceived(dataPoints: DataPointContainer) {
-                val database by lazy{AppDatabase.getDatabase(this@SecondaryActivity)}
-                val userDao by lazy{database.userDao()}
                 val current = LocalDateTime.now().format(dbTimeFormatter)
                 val datapoint = HealthDataPoint(
                                     UUID.randomUUID(),
@@ -119,12 +161,15 @@ class SecondaryActivity : ComponentActivity() {
                     lastTimeDBWorking = current
                 }
                 else{
-                    cacheOfData.add(datapoint)
-                    //if it hasn't been working for 4 hours, inform user
-                    if(current.substring(11, 13) >= lastTimeDBWorking.substring(11,13) +4){
+                    //if it hasn't been working for 4 hours, inform and don't add to cache
+                    // would need more testing to determine perfect cache size, just say 4 hours for now
+                    if(current.substring(11, 13).toInt() >= lastTimeDBWorking.substring(11,13).toInt() +4){
                         setContent{
                             WearApp("DB not updated for more than 4 hours!","Main\nScreen", "Toggle Backend Loss" )
                         }
+                    }
+                    else{
+                        cacheOfData.add(datapoint)
                     }
                 }
             }
@@ -136,7 +181,7 @@ class SecondaryActivity : ComponentActivity() {
         )
 
         setContent {
-            WearApp("Polling Health data...", "Main\nScreen", "Toggle Backend Loss")
+            WearApp("Polling Health data...", "Main\nScreen", "Toggle\nBackend\nLoss")
         }
     }
 
