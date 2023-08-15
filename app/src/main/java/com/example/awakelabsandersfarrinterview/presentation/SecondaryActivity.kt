@@ -17,9 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.MaterialTheme
 import androidx.health.services.client.HealthServices
 import androidx.health.services.client.PassiveListenerCallback
 import androidx.health.services.client.data.DataPointContainer
@@ -35,6 +32,9 @@ import androidx.room.PrimaryKey
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Text
 import com.example.awakelabsandersfarrinterview.presentation.theme.AwakeLabsAndersFarrInterviewTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -44,23 +44,28 @@ import java.util.Queue
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
+/**
+ * Activity which sets up DB and monitoring for health data
+ * Also has a button which toggles whether the "back-end" (i.e. the database) is accessible
+ */
 class SecondaryActivity : ComponentActivity() {
     var backEndWorking = true
-
     val dbTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     var lastTimeDBWorking: String = LocalDateTime.now().format(dbTimeFormatter)
 
     //Data to be logged in database
     @Entity
     data class HealthDataPoint(
-        @PrimaryKey val id: UUID,
+        @PrimaryKey val id: String,
         @ColumnInfo(name = "time") val time: String?,
         @ColumnInfo(name = "heart_rate_bpm") val heartRateBPM: Double?,
         @ColumnInfo(name = "absolute_elevation") val absoluteElevation: Double?,
         @ColumnInfo(name = "speed") val speed: Double?
     )
 
+    //Queue used for caching data if back-end DB goes down
     var cacheOfData: Queue<HealthDataPoint> = ConcurrentLinkedQueue<HealthDataPoint>()
+    //Dao object for database interaction, only insert operations right now
     @Dao
     interface HealthDao {
         @Insert
@@ -68,10 +73,12 @@ class SecondaryActivity : ComponentActivity() {
 
     }
 
+    //AppDatabase - extends room database SQLite implementation
     @Database(entities = [HealthDataPoint::class], version = 1)
     abstract class AppDatabase : RoomDatabase() {
         abstract fun userDao(): HealthDao
 
+        //Callback, initializes DB with mock data
         private class HealthCallback(
             private val scope: CoroutineScope
         ) : RoomDatabase.Callback() {
@@ -82,7 +89,7 @@ class SecondaryActivity : ComponentActivity() {
                     scope.launch {
                         val healthDao = database.userDao()
                         val startDataPoint = HealthDataPoint(
-                            UUID.randomUUID(),
+                            UUID.randomUUID().toString(),
                             "0",
                             0.0,
                             0.0,
@@ -94,10 +101,13 @@ class SecondaryActivity : ComponentActivity() {
             }
         }
 
+        //Singleton implementation as recommended by
+        //https://developer.android.com/codelabs/android-room-with-a-view-kotlin#13
         companion object {
             @Volatile
             private var INSTANCE: AppDatabase? = null
 
+            //function used to create DB
             fun getDatabase(context: Context,
                             scope: CoroutineScope): AppDatabase {
                 // if the INSTANCE is not null, then return it,
@@ -113,12 +123,12 @@ class SecondaryActivity : ComponentActivity() {
                     // return instance
                     return instance
                 }
-
             }
         }
     }
 
 
+    //Create and set up all required information for health and DB
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         //building health polling information
@@ -134,21 +144,10 @@ class SecondaryActivity : ComponentActivity() {
 
         // logging data in database whenever new data is received from HealthServicesClient
         val passiveListenerCallback: PassiveListenerCallback = object : PassiveListenerCallback {
-            override fun onRegistered() {
-                super.onRegistered()
-                val startDataPoint = HealthDataPoint(
-                    UUID.randomUUID(),
-                    "0",
-                    0.0,
-                    0.0,
-                    0.0,
-                )
-                userDao.insert(startDataPoint)
-            }
             override fun onNewDataPointsReceived(dataPoints: DataPointContainer) {
                 val current = LocalDateTime.now().format(dbTimeFormatter)
                 val datapoint = HealthDataPoint(
-                                    UUID.randomUUID(),
+                                    UUID.randomUUID().toString(),
                                     current,
                                     dataPoints.getData(DataType.HEART_RATE_BPM)[0].value,
                                     dataPoints.getData(DataType.ABSOLUTE_ELEVATION)[0].value,
@@ -175,6 +174,7 @@ class SecondaryActivity : ComponentActivity() {
             }
         }
 
+        //Set up passive health monitoring using above set-up
         passiveMonitoringClient.setPassiveListenerCallback(
             passiveListenerConfig,
             passiveListenerCallback
@@ -185,6 +185,7 @@ class SecondaryActivity : ComponentActivity() {
         }
     }
 
+    //Main app containing all of the UI
     @Composable
     fun WearApp(greetingName: String, homeText: String, stopDataText: String) {
         AwakeLabsAndersFarrInterviewTheme {
@@ -213,6 +214,7 @@ class SecondaryActivity : ComponentActivity() {
             }
         }
     }
+    //Polling info greeting
     @Composable
     fun Greeting(greetingName: String) {
         Text(
@@ -223,6 +225,7 @@ class SecondaryActivity : ComponentActivity() {
         )
     }
 
+    //Button to go back to the landing page
     @Composable
     fun HomeButton(homeText: String){
         Button(
@@ -238,16 +241,20 @@ class SecondaryActivity : ComponentActivity() {
         )
     }
 
+    //Moves back to the main activity
     private fun toHome() {
         val mainActivityIntent = Intent(this, MainActivity::class.java)
         startActivity(mainActivityIntent)
     }
 
+    //toggles the backendWorking value
+    //that the back-end database isn't working
     @Composable
     fun SimulateDataLossButton(stopDataText: String){
         Button(
             onClick = {toggleDataLoss()},
             enabled = true,
+            modifier = Modifier.fillMaxWidth(),
             content = {
                 Text(
                     textAlign = TextAlign.Center,
@@ -262,4 +269,3 @@ class SecondaryActivity : ComponentActivity() {
         backEndWorking = !backEndWorking
     }
 }
-
